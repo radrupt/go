@@ -50,8 +50,8 @@ func NewCond(l Locker) *Cond {
 //    c.L.Unlock()
 //
 func (c *Cond) Wait() {
-	c.checker.check()
-	t := runtime_notifyListAdd(&c.notify)
+	c.checker.check()                     // 检测cond是否被复制
+	t := runtime_notifyListAdd(&c.notify) // 获取tiket
 	c.L.Unlock()
 	runtime_notifyListWait(&c.notify, t)
 	c.L.Lock()

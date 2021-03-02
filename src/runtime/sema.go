@@ -447,10 +447,11 @@ func (root *semaRoot) rotateRight(y *sudog) {
 //
 // It must be kept in sync with the sync package.
 type notifyList struct {
+	// 等待的sudog ticket， sudog记录了goroutine
 	// wait is the ticket number of the next waiter. It is atomically
 	// incremented outside the lock.
 	wait uint32
-
+	// 已通知的sudog ticket
 	// notify is the ticket number of the next waiter to be notified. It can
 	// be read outside the lock, but is only written to with lock held.
 	//
@@ -477,8 +478,11 @@ func less(a, b uint32) bool {
 // such a notification, passing the returned ticket number.
 //go:linkname notifyListAdd sync.runtime_notifyListAdd
 func notifyListAdd(l *notifyList) uint32 {
+	// 可能被并发调用, 比如cond的锁是读写锁，那就允许读并发
 	// This may be called concurrently, for example, when called from
 	// sync.Cond.Wait while holding a RWMutex in read mode.
+	// Xadd 交换加, 这里没懂？看网上是将两数（目标操作数，源操作数）交换后相加再赋值到目标操作数上
+	// 为什么要交换?为什么还要-1
 	return atomic.Xadd(&l.wait, 1) - 1
 }
 
@@ -489,17 +493,21 @@ func notifyListWait(l *notifyList, t uint32) {
 	lockWithRank(&l.lock, lockRankNotifyList)
 
 	// Return right away if this ticket has already been notified.
+	// 如果ticket小于notify, 表示该goroutine已通知过
 	if less(t, l.notify) {
 		unlock(&l.lock)
 		return
 	}
 
 	// Enqueue itself.
+	// 获取sudog，sudog记录notifyList这个链表中每个节点的信息
+	// 主要是ticket， prev，next，*g
 	s := acquireSudog()
-	s.g = getg()
+	s.g = getg() // 获取当前goroutine
 	s.ticket = t
 	s.releasetime = 0
 	t0 := int64(0)
+	// 不懂
 	if blockprofilerate > 0 {
 		t0 = cputicks()
 		s.releasetime = -1
@@ -510,6 +518,11 @@ func notifyListWait(l *notifyList, t uint32) {
 		l.tail.next = s
 	}
 	l.tail = s
+	// 利用mcall，在golang需要进行协程切换时被调用，用来保存被切换出去协程的信息，
+	// 并在当前线程的g0协程堆栈上执行新的函数。一般情况下，会在新函数中执行
+	// 一次schedule()来挑选新的协程来运行
+	// g0即schedule()获取的符合条件的goroutine
+	// 这个g0的获取就涉及到go的goroutine调度策略
 	goparkunlock(&l.lock, waitReasonSyncCondWait, traceEvGoBlockCond, 3)
 	if t0 != 0 {
 		blockevent(s.releasetime-t0, 2)

@@ -332,6 +332,7 @@ type gobuf struct {
 	bp   uintptr // for framepointer-enabled architectures
 }
 
+// sudog 表示等待列表中的g, 即notifyList
 // sudog represents a g in a wait list, such as for sending/receiving
 // on a channel.
 //
@@ -342,15 +343,16 @@ type gobuf struct {
 //
 // sudogs are allocated from a special pool. Use acquireSudog and
 // releaseSudog to allocate and free them.
+// 比如cond在wait的时候分配，在signal的时候释放
 type sudog struct {
 	// The following fields are protected by the hchan.lock of the
 	// channel this sudog is blocking on. shrinkstack depends on
 	// this for sudogs involved in channel ops.
 
-	g *g
+	g *g // 绑定的goroutine
 
-	next *sudog
-	prev *sudog
+	next *sudog         // 指向下一个等待线程的指针地址
+	prev *sudog         // 指向上一个等待线程的指针地址
 	elem unsafe.Pointer // data element (may point to stack)
 
 	// The following fields are never accessed concurrently.
@@ -363,7 +365,7 @@ type sudog struct {
 	ticket      uint32
 
 	// isSelect indicates g is participating in a select, so
-	// g.selectDone must be CAS'd to win the wake-up race.
+	// g.selectDone must be CAS'd(compare and swap) to win the wake-up race.
 	isSelect bool
 
 	// success indicates whether communication over channel c
